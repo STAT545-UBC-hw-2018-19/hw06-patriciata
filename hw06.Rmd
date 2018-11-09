@@ -1,0 +1,516 @@
+---
+title: "hw06"
+author: "Patricia T. Angkiriwang"
+date: "November 8, 2018"
+output: 
+  html_document:
+    theme: readable
+---
+
+# Part One: Halloween Candy (Topic #3)
+
+Prompted by a [homework assignment from 2015](http://stat545.com/Classroom/assignments/hw06/references/2015_hw.html), we explore a dataset based on a [Halloween candy survey](https://github.com/jennybc/candy). 
+
+Here, the data used is the latest (2017) candy data from the [Science Creative Quarterly](http://www.scq.ubc.ca/so-much-candy-data-seriously/), talked about [here](https://boingboing.net/2017/10/30/the-2017-halloween-candy-hiera.html).
+
+In this exercise, we'll: 
+
+1. Explore raw data, 
+2. Get it into a workable format (guided by [2015 class notes](https://github.com/jennybc/candy/blob/master/data-raw/00_explore-raw.md)), and 
+3. Plot and Analyse (compare different types of candy, create graph similar to that in [Science Creative Quarterly](http://www.scq.ubc.ca/so-much-candy-data-seriously/), and other analyses)
+
+Other analyses of this "candy hierarchy" data found on the web acted as inspiration and references for this work:
+
+- http://www.shanellis.com/blog/data-driven-decision-making-halloween-candy-edition/#disqus_thread
+- https://gist.github.com/EmilHvitfeldt/6d936c8af4d2dd1556669d367f0a6056
+- https://github.com/phoebewong/candy-hierarchy-2017/blob/master/candy_analysis.md
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse)) # Loads purrr, too
+suppressPackageStartupMessages(library(testthat))
+library(stringr)
+library(readxl)
+require(janitor) # for cleaning strings
+```
+
+### 1. What does the raw data look like?
+
+Let's import and take a look at the excel file. Check the number of rows, and what the column names look like.
+
+```{r}
+raw <- read_excel("candyhierarchy2017.xlsx")
+head(raw)
+nrow(raw)
+colnames(raw) %>% head(10) #View(names(raw))
+colnames(raw) %>% tail(20)
+raw <- as.data.frame(raw)
+```
+
+This data frame has 2460 rows and 120 columns. The first 5 columns/ variables seem to be demographic questions, and most of the others are candy types (labeled "Q6"). There are few questions at the end related to "the dress" (blue and black/ white and gold), day of the week preference (friday or sunday), and media advertising (click on which website you would check out).
+
+### 2. Let's clean up the data
+
+Take columns of interest (every candy question starts with "Q6", plus first 5 demographic questions). Then, clean up the names using the clean_names() function in the 'janitor' package. This function makes all letters lowercase, and replaces any punctuation or spaces with underscores.
+
+```{r}
+candy_cols <- grep("Q6", colnames(raw)) # find column number of each candy column
+candy <- raw[,c(1:6,candy_cols)] %>% janitor::clean_names() # take first 5 columns too
+colnames(candy) %>% head(10)
+```
+
+We'll use stringr to further clean column names, ie. get rid of the question numbers that precede each variable.
+
+```{r}
+names(candy) <- names(candy) %>% str_replace(pattern='^[q].[_]',replacement="")
+candy <- candy %>% rename(id=internal_id, hundred_grand_bar=`100_grand_bar`) # for ease
+colnames(candy) %>% head(10)
+
+candy_names <- names(candy)[candy_cols] # store candy names for further use
+```
+
+Let's check age distribution, just for fun. Before we do this, we'll first convert the ages into an integer format.
+
+```{r}
+candy <- candy %>%
+  mutate(age = as.integer(age)) 
+nrow(candy)
+ggplot(candy, aes(age)) + geom_histogram(binwidth = 3) + theme_bw()
+```
+
+Lots of outlier/ troll responses with age > 100. Let's filter those out (Google tells us that the oldest human was ~122 years old). This also takes out NA responses (people who didn't respond to the age question) out of the dataset, but maybe we don't need to take those people seriously anyway.
+
+```{r}
+candy <- candy %>% filter(age <= 122)
+nrow(candy)
+ggplot(candy, aes(age)) + geom_histogram(binwidth = 3) + theme_bw()
+```
+
+Much better.
+
+Note that there were some responses with age == 1 as well, but let's ignore those for now. Let's go with the naive assumption that maybe they will balance out with the supposed 100 year olds in our data.
+
+
+### 3. How do respondents feel about each candy? 
+
+First, let's look at the candy level, ignoring any associations between them. How are each of them rated? 
+
+Here, make a new data frame (candy_feelings), using "gather" to change the dataframe into a long format (candy and sentiment as columns). Convert any candy names and sentiments from character type to factors, just in case. 
+
+```{r}
+candy_feelings <- gather(candy %>% select(candy_names), key="candy",value="sentiment") %>% mutate(sentiment=as.factor(sentiment)) %>% mutate(candy=as.factor(candy))
+
+candy_feelings %>% head() 
+```
+
+How do people generally feel about candy?
+
+```{r}
+ggplot(candy_feelings, aes(sentiment)) + geom_histogram(stat="count") + theme_bw()
+```
+
+There's a pretty even distribution of feelings overall. No one sentiment dominates. NA's might indicate that there are candies on the list people don't know enough about to select a response (there are some pretty obscure ones!).
+
+We can also count how many of each feeling each candy receives:
+
+```{r}
+candy_feelings %>% group_by(candy,sentiment) %>% tally()
+```
+
+To compare between candies, we'll quantify each feeling. "Joy" receives a score of 1, "Despair" -1, and "Meh"s will be assigned a score of -0.01. (Note that in the original plot in [Science Creative Quarterly](http://www.scq.ubc.ca/so-much-candy-data-seriously/), the "Meh" votes are ignored; instead, a "Net feelies" measurement was defined as = #Joy - #Despair)
+
+```{r}
+candy_feelings_quantified <- candy_feelings %>% 
+  mutate(score=case_when(sentiment == "JOY" ~ 1,
+                         sentiment == "DESPAIR" ~ -1,
+                         sentiment == "MEH" ~ -0.01)) %>% 
+  group_by(candy) %>% summarise(score = sum(score,na.rm=TRUE))
+
+arrange(candy_feelings_quantified, desc(score))
+```
+
+The top scoring candies are:
+
+```{r}
+arrange(candy_feelings_quantified, desc(score)) %>% pull(candy) %>% head(10) 
+```
+
+ And the bottom scoring candies are:
+
+```{r}
+arrange(candy_feelings_quantified, score)  %>% pull(candy) %>% head(10)
+```
+
+Most of the bottom scoring "candies" aren't candies at all. Unsurprisingly, broken glow sticks and gum from baseball cards are the two worst rated.
+
+Let's plot them to get a visual representation here.
+
+```{r fig.height=15, fig.width=8}
+ggplot(candy_feelings_quantified %>% mutate(candy=reorder(candy,score)), # here, reorder factors so it plots from small to large score
+       aes(y=candy,x=score, group="none")) + 
+  geom_line() + 
+  theme_bw() + theme(axis.text.y = element_text(size=10)) + 
+  geom_vline(xintercept=0,linetype=2)
+```
+
+I don't know about you, but I'm horrified that Coffee Crisps have a lower rating than Vicodin. 
+
+On that note, what is wrong with people who don't like Coffee Crisp? Let's do some more analysis on Coffee Crisps in particular. Is liking or disliking Coffee Crisps somehow related to liking any of the other variables?
+
+First, let's wrangle the data into something that we can work with. Here, we create a list of data frames, where each data frame is the score of another candy, computed separately for groups of people who rated Coffee Crisps with "JOY", "DESPAIR", and "MEH" (normalized for the number of people in each category):
+
+```{r}
+candy_of_interest <- "coffee_crisp"
+other_candy <- str_subset(candy_names, pattern="[^coffee_crisp]") # character vector of all other candy
+
+dfs <- list() # start out with an empty list
+for (i in 1:length(other_candy)){
+  score_name <- paste0(other_candy[i],"_score") # create name for new column (candy score)
+  x <- candy %>% select_(candy_of_interest,other_candy[i]) %>%  
+        mutate(score=case_when(!!sym(other_candy[i]) == "JOY" ~ 1, # as before, change the rating to numerical weights
+                               !!sym(other_candy[i]) == "DESPAIR" ~ -1,
+                               !!sym(other_candy[i]) == "MEH" ~ -0.01)) %>% 
+        group_by_(candy_of_interest) %>%  # group by values in candy_of_interest (ie. coffee crisp)
+    summarise(!!score_name:= sum(score,na.rm=TRUE)/n()) # and compute the score for the other candy (normalized for the number of people in each category)
+  dfs[[i]] <- x # add this new data frame to the list
+}
+
+dfs[[1]]
+```
+
+Use the reduce() function to join together all the dataframes we created, joining on the coffee_crisp column. Now we have scores for all other candies, grouped by whether those people liked or disliked Coffee Crisps.
+
+```{r}
+(q <- reduce(dfs,left_join,by=candy_of_interest))
+```
+
+To visualize these scores more effectively, we can view this on a heat map. Yellow indicates a lower score, and Red a higher score (white at 0). Recall that a rating of "Joy" receives a score of 1, "Despair" -1, and "Meh"s will be assigned a score of -0.01. 
+
+Again, these scores were computed separately for groups of people who rated Coffee Crisps with "DESPAIR", "JOY", and "MEH" (shown as different columns in the heat map below).
+
+```{r fig.height=10, fig.width=8}
+to_plot <- q %>% gather(key="type",value="score",2:length(q)) # transform data into a long format for ggplot
+
+ggplot(data = to_plot, aes(x = coffee_crisp, y = type)) + # coffee_crisp sentiments on the x axis, and other candies on the y acis
+  geom_tile(aes(fill = score)) + # colours indicate scores computed for each candy
+  scale_fill_gradient2(low="darkred", high="yellow", guide="colorbar") + 
+  xlab("Coffee Crisp Sentiments") +
+  theme_minimal()
+
+```
+
+Some types of candies (any full sized candy bars, kit kats, cash, Reese's peanut butter cups, etc.) everyone seems to like, no matter whether they like coffee crisps or not. 
+
+On the other hand, the heat maps shows some candies that have different scores between the people who like vs dislike (react with "joy" or "despair" to) Coffee Crisps. 
+
+# Part Two: Trump Tweets (Topic #5)
+
+Using Jenny Bryan's [purrr tutorial](https://jennybc.github.io/purrr-tutorial/ls08_trump-tweets.html) as a guide, we load and analyse Trump tweets, extracting words from commonly tweeted from Trump's ([angrier](http://varianceexplained.org/r/trump-tweets/)) Android device.
+
+In this exercise, we'll:
+
+1. Walk through the steps in the purrr tutorial to analyse all of Trump's twitter data in our dataset
+2. Pull out any other interesting things in Trump's twitter data
+
+Load the data, downloaded from http://varianceexplained.org/files/trump_tweets_df.rda (2016 twitter data).
+
+```{r}
+load("trump_tweets_df.rda")
+glimpse(trump_tweets_df)
+```
+
+Let's look at the text in particular. (Preview using head() and strtrim())
+
+```{r}
+all_tweets <- trump_tweets_df$text
+all_tweets %>% head() %>% strtrim(70)
+```
+
+Let's check when these tweets were collected:
+
+```{r}
+dates <- trump_tweets_df$created
+dates[order(format(as.Date(dates),"%y%m%d"))[1]]
+dates[order(format(as.Date(dates),"%y%m%d"))[length(dates)]]
+```
+
+It seems like these tweets were created at the end of 2015 to August 2016-- during Trump's campaign leading up the presidential election. 
+
+
+### 1. Using purrr
+
+According to [Jenny](https://jennybc.github.io/purrr-tutorial/ls08_trump-tweets.html), words that were shown to be associated with Trump tweets from an Android device include "badly","crazy","weak","spent","strong","dumb","joke","guns","funny", and "dead". 
+
+We store these as a regular expression, to be used later. Our goal is to extract these words from each tweet, so that we can count them later and conduct further analyses.
+
+```{r}
+regex <- "badly|crazy|weak|spent|strong|dumb|joke|guns|funny|dead"
+```
+
+Now, do those tweets contain any of the words in regex? Here, we use gregexpr() to filter through our vector of tweets (all_tweets)
+
+We can interpret the output as the following: gregexpr outputs -1 if there are no matches. If there is at least one match, it outputs the integer of the position of the first character of each match. 
+
+The attribute "match.length" contains the length of each match (if there are matches).
+
+```{r}
+matches <- gregexpr(regex, all_tweets)
+str(matches, list.len=10)
+```
+
+To extract how many matches there are in each tweet in a single vector or list, we would need to sum up the number of elements that are not -1.
+
+```{r}
+num_matches <- map_int(matches, function(x) sum(x!=-1)) # or sum(x>0), used in Jenny Bryan's tutorial
+#or map_int(match_lengths, function(x) sum(x!=-1))
+num_matches %>% head()
+```
+
+As a reminder, our goal is to extract certain words of interest in the tweets. To extract these words from each tweet, we need to use substring(). But substring() uses particular inputs, i.e. the position of the first and last character of the substring to extract from each tweet.
+
+We'll need to take the information needed from the "matches" list above, in a particular format, to feed into substring().
+
+First, we'll need to get the match lengths. To do this, we extract the attribute out from each element in the matches list.
+
+```{r}
+match_lengths <- map(matches, attr, which = "match.length")
+match_lengths %>% head()
+```
+
+And what about the position of the matches? The "matches" list has those, but we don't need all the attributes. Use as.vector() to strip those attributes.
+
+```{r}
+match_first <- map(matches, as.vector)
+match_first %>% head()
+```
+
+Let's test what we have so far with a single tweet, to make sure substring() works. Pick a tweet that has at least one match. Calculate the position of the last character of the match (t_last) by adding the position of the first, plus the length, minus one.
+
+```{r}
+i <- which(num_matches>0)[1] # pick a tweet that has at least one match
+
+(tweet <- all_tweets[i])
+(t_first <- match_first[[i]])
+t_length <- match_lengths[[i]]
+(t_last <- t_first + t_length - 1)
+substring(tweet, t_first, t_last)
+```
+
+How about a tweet that has multiple matches? Does substring() still work? 
+
+```{r}
+i <- which(num_matches>=2)[1] # pick a tweet that has at least 2 matches
+
+(tweet <- all_tweets[i])
+(t_first <- match_first[[i]])
+t_length <- match_lengths[[i]]
+(t_last <- t_first + t_length - 1)
+substring(tweet, t_first, t_last)
+```
+
+For a tweet with multiple of interest, substring seems to be able to pick up on all the words. (substring() can take in vector data for the first and last character arguments!)
+
+How about for 0 words of interest?
+
+```{r}
+i <- which(num_matches==0)[1] # pick a tweet that has no matches
+
+(tweet <- all_tweets[i])
+t_first <- match_first[[i]]
+t_length <- match_lengths[[i]]
+t_last <- t_first + t_length - 1
+substring(tweet, t_first, t_last)
+```
+
+We get an empty string for a tweet with 0 words of interest. Great!
+
+Let's put this all together, so that we don't have to run substring() separately for each tweet. To do this, we again make use of the purrr package and work with just lists.
+
+Instead of calculating the last character (t_last) every time we get a single tweet, let's make a list similar to match_first and match_lengths. 
+
+We do this using map2(), which allows us to map over 2 lists in parallel.
+
+```{r}
+match_last <- map2(match_first,match_lengths,function(x,y) ifelse(x!=-1,x+y-1,-1))
+match_last %>% head()
+```
+
+Now we have 3 lists, with match_first and match_last satisfying the arguments that need to go into substring(). 
+
+We want to apply substring() to the lists all_tweets, match_first, and match_last, but we now have 3 lists to map over, so map2() will not work. Instead, we use pmap() - which takes in the list of lists we want to map over in parallel. 
+
+```{r}
+pmap(list(text=all_tweets,first = match_first, last = match_last), substring) %>% head()
+```
+
+It works!
+
+Alternatively, pmap() can take in a dataframe (which is, in fact, just a list of equal length lists!): 
+
+```{r}
+mdf <- tibble(
+  text = all_tweets,
+  first = match_first,
+  last = match_last
+)
+pmap(mdf, substring) %>% head()
+```
+
+Or, if we want to put all the steps together using pipes (%>%), we could have done this in the following way:
+
+```{r}
+tibble(text = all_tweets,
+       first = gregexpr(regex, all_tweets)) %>% 
+  mutate(match_length = map(first, ~ attr(.x, which = "match.length")),
+         last = map2(first, match_length, ~ .x + .y - 1)) %>%
+  select(-match_length) %>% 
+  pmap(substring) %>% head()
+```
+
+Next, let's step it up and generalize this as function.
+
+First we'll make a function that takes in twitter data (text only, as a character vector) and words of interest (as a regular expression) and puts out a dataframe with columns: 
+
+- text, - match_first, - match_last, - n_matches (number of matches in each tweet), and - match_words (extracted matching words)
+
+```{r}
+filter_tweets <- function(tweets,words){
+  tibble(text = tweets,
+                 match_first = gregexpr(words, tweets)) %>% 
+  mutate(match_length = map(match_first, ~ attr(.x, which = "match.length")),
+         match_last = map2(match_first, match_length, ~ .x + .y - 1),
+         n_matches = map_int(match_first, function(x) sum(x>0))) %>% 
+  select(-match_length) %>% 
+    mutate(match_words = pmap(list(text=tweets,first = match_first, last = match_last),substring))
+}
+```
+
+Test out our function: 
+
+```{r}
+words <- "badly|crazy|weak|spent|strong|dumb|joke|guns|funny|dead" 
+tweetdf <- filter_tweets(all_tweets,words)
+tweetdf %>% head()
+```
+
+Test that we can still extract the matching words, as before:
+
+```{r}
+tweetdf %>% filter(n_matches>0) %>% pull(match_words) %>% head()
+```
+
+Now, could we slightly modify our function so that it takes in a dataframe (containing a column called "text"), instead of just a character vector of text? This way, we don't need to create a new dataframe with tibble(), and we can simply use pipes to modify the existing dataframe.
+
+```{r}
+filter_tweets2 <- function(tweetdf,words){
+  tweetdf %>% 
+    mutate(match_first = gregexpr(words, text),
+         match_length = map(match_first, ~ attr(.x, which = "match.length")),
+         match_last = map2(match_first, match_length, ~ .x + .y - 1),
+         n_matches = map_int(match_first, function(x) sum(x>0))) %>% 
+    select(-match_length) %>% 
+    mutate(match_words = pmap(list(text=text,first = match_first, last = match_last),substring))
+}
+```
+
+This modified function would allow us to use the original trump_tweets_df dataframe, which turns out to have lots more metadata, including retweet counts and "status source", which indicates which device (Android or iPhone) the tweet comes from:
+
+```{r}
+trump_tweets_df %>% head()
+```
+
+But since we don't need *all* the information in that dataframe, let's select the columns we're interested in, before feeding it into our filter_tweets2() function.
+
+```{r}
+all_tweets2 <- trump_tweets_df %>%
+  select(statusSource, retweetCount, text) %>%
+  extract(statusSource, "source", "Twitter for (.*?)<") %>%
+  filter(source %in% c("iPhone","Android")) 
+
+words <- "badly|crazy|weak|spent|strong|dumb|joke|guns|funny|dead" 
+filter_tweets2(all_tweets2,words) %>% head()
+```
+
+Inspired by [the original article by David Robinson](http://varianceexplained.org/r/trump-tweets/), let's compare between Trump's Android and iPhone tweets. People have speculated that Trump's own tweets come from an Android device, while his campaign staff had an iPhone.
+
+How many total tweets are from Android vs iPhone?
+
+```{r}
+all_tweets2  %>% 
+  group_by(source) %>% tally() %>% 
+  ggplot(aes(x=source,y=n)) + geom_bar(stat="identity") + theme_bw() + ggtitle("Total tweets in dataset")
+```
+
+How do the retweets compare between the two? (To do this, we sum the retweet counts in each category, and normalize by number of tweets in each category)
+
+```{r}
+all_tweets2  %>% 
+  group_by(source) %>% summarize(retweets=sum(retweetCount)/n()) %>% 
+  ggplot(aes(x=source,y=retweets)) + geom_bar(stat="identity") + theme_bw() + ggtitle("(Normalized) retweet counts")
+```
+
+How many matches are in tweets from Android vs iPhone? Is it true that those words in our regular expression are coming from primarily Android tweets?
+
+```{r}
+all_tweets2  %>% filter_tweets2(words)  %>% 
+  group_by(source) %>% summarise(n_matches = sum(n_matches)) %>% 
+  ggplot(aes(x=source,y=n_matches)) + geom_bar(stat="identity") + theme_bw() + ggtitle(paste("Tweets with",words))
+```
+
+Let's try filtering out different (Trump speech-like) words now, and compare between Android and iPhone tweets.
+
+```{r}
+w <- "sad|Sad|SAD"
+all_tweets2  %>% filter_tweets2(.,w) %>% filter(n_matches>0) %>% pull(text) %>% head()
+
+all_tweets2  %>% filter_tweets2(.,w) %>%
+  group_by(source) %>% summarise(n_matches = sum(n_matches)) %>% 
+  ggplot(aes(x=source,y=n_matches)) + geom_bar(stat="identity") + theme_bw() + ggtitle(paste("Tweets with",w))
+```
+
+It's interesting that "sad" appears in both Android (speculated to be Trump) and iPhone (speculated to be his staff) tweets. How about just "SAD" in all capitals?
+
+```{r}
+w <- "SAD"
+all_tweets2  %>% filter_tweets2(.,w) %>% filter(n_matches>0) %>% pull(text) %>% head()
+
+all_tweets2  %>% filter_tweets2(.,w) %>%
+  group_by(source) %>% summarise(n_matches = sum(n_matches)) %>% 
+  ggplot(aes(x=source,y=n_matches)) + geom_bar(stat="identity") + theme_bw() + ggtitle(paste("Tweets with",w))
+
+```
+
+"SAD" in all capitals seems to be just the Android tweets (n=4). 
+
+How about guns?
+
+```{r}
+w <- "guns|Guns|GUNS"
+all_tweets2  %>% filter_tweets2(.,w) %>% filter(n_matches>0) %>% pull(text) %>% head()
+
+all_tweets2  %>% filter_tweets2(.,w) %>%
+  group_by(source) %>% summarise(n_matches = sum(n_matches)) %>% 
+  ggplot(aes(x=source,y=n_matches)) + geom_bar(stat="identity") + theme_bw() + ggtitle(paste("Tweets with",w))
+
+```
+
+Totally? 
+
+```{r}
+w <- "totally|Totally|TOTALLY"
+all_tweets2  %>% filter_tweets2(.,w) %>% filter(n_matches>0) %>% pull(text) %>% head()
+
+all_tweets2  %>% filter_tweets2(.,w) %>%
+  group_by(source) %>% summarise(n_matches = sum(n_matches)) %>% 
+  ggplot(aes(x=source,y=n_matches)) + geom_bar(stat="identity") + theme_bw() + ggtitle(paste("Tweets with",w))
+```
+
+And finally, how about tweets ending with an exclamation mark? 
+
+```{r}
+w <- "[!]$"
+all_tweets2  %>% filter_tweets2(.,w) %>% filter(n_matches>0) %>% pull(text) %>% head()
+
+all_tweets2  %>% filter_tweets2(.,w) %>%
+  group_by(source) %>% summarise(n_matches = sum(n_matches)) %>% 
+  ggplot(aes(x=source,y=n_matches)) + geom_bar(stat="identity") + theme_bw() + ggtitle(paste("Tweets with",w))
+```
