@@ -1,6 +1,6 @@
-# hw06-patriciata: Assignment 6
+# hw06-patriciata: Homework 6
 
-This is the repository for STAT547M Assignment 6 by Patricia Angkiriwang.
+This is the repository for STAT547M Homework 6 by Patricia Angkiriwang.
 This assignment attempts topics 3 and 5 (Hallowe'en Candy data and Trump Tweets). Homework prompts can be found [here](http://stat545.com/Classroom/assignments/hw06/hw06.html).
 
 |  Assignment Files  |         |
